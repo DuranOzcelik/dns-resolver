@@ -9,8 +9,9 @@ def rr(name, rtype, rdata, ttl=300):
     return d.encode_name(name) + struct.pack("!HHIH", d.TYPES[rtype], 1, ttl, len(rdata)) + rdata
 
 
-def message(answers=(), authorities=(), additionals=(), rcode=0, msg_id=1):
-    header = struct.pack("!6H", msg_id, 0x8000 | rcode, 0, len(answers), len(authorities), len(additionals))
+def message(answers=(), authorities=(), additionals=(), rcode=0, msg_id=1, authoritative=False):
+    flags = 0x8000 | rcode | (0x0400 if authoritative else 0)
+    header = struct.pack("!6H", msg_id, flags, 0, len(answers), len(authorities), len(additionals))
     return header + b"".join(answers) + b"".join(authorities) + b"".join(additionals)
 
 
@@ -133,7 +134,8 @@ class Resolution(unittest.TestCase):
         net = FakeInternet({("170.247.170.2", "example.com", "A"): message(
             answers=[rr("example.com", "A", ip("1.1.1.1"))])})
         result = d.resolve("example.com", send=net)
-        self.assertEqual(result.steps[0]["server"], "b.root-servers.net")
+        self.assertEqual([(step["server"], step["outcome"]) for step in result.steps],
+                         [("a.root-servers.net", "no reply"), ("b.root-servers.net", "answer")])
 
     def test_rejects_referral_loop(self):
         net = FakeInternet({(ROOT, "a.com", "A"): TO_COM, (TLD, "a.com", "A"): TO_COM})
@@ -153,6 +155,54 @@ class Resolution(unittest.TestCase):
             with self.assertRaises(d.DNSError):
                 d.resolve(name, qtype, send=net)
         self.assertEqual(net.asked, [])
+
+
+class Audit(unittest.TestCase):
+    """One zone with four nameservers: in sync, stale, lame and down."""
+
+    def internet(self):
+        ns = {"ns1.x.com": "10.1.0.1", "ns2.x.com": "10.1.0.2", "ns3.x.com": "10.1.0.3", "ns4.x.com": "10.1.0.4"}
+        referral = message(authorities=[rr("x.com", "NS", d.encode_name(host)) for host in ns],
+                           additionals=[rr(host, "A", ip(addr)) for host, addr in ns.items()])
+
+        def soa(serial):
+            data = d.encode_name("ns1.x.com") + d.encode_name("admin.x.com") + struct.pack("!5I", serial, 1, 1, 1, 1)
+            return message(answers=[rr("x.com", "SOA", data)], authoritative=True)
+
+        def answer(address, authoritative=True):
+            return message(answers=[rr("x.com", "A", ip(address))], authoritative=authoritative)
+
+        return FakeInternet({
+            (ROOT, "x.com", "A"): referral,
+            ("10.1.0.1", "x.com", "A"): answer("1.1.1.1"), ("10.1.0.1", "x.com", "SOA"): soa(2024),
+            ("10.1.0.2", "x.com", "A"): answer("9.9.9.9"), ("10.1.0.2", "x.com", "SOA"): soa(2023),
+            ("10.1.0.3", "x.com", "A"): answer("1.1.1.1", authoritative=False),
+            ("10.1.0.3", "x.com", "SOA"): soa(2024),
+            # 10.1.0.4 is missing from the table, so it times out
+        })
+
+    def test_flags_stale_lame_and_unreachable_servers(self):
+        report = d.audit("x.com", send=self.internet())
+        rows = {row["server"]: row for row in report["servers"]}
+        self.assertEqual((report["zone"], report["reference"], report["consistent"]), ("x.com", ["1.1.1.1"], False))
+        self.assertEqual(report["serials"], [2023, 2024])
+        self.assertEqual((rows["ns1.x.com"]["status"], rows["ns1.x.com"]["agrees"]), ("ok", True))
+        self.assertEqual((rows["ns2.x.com"]["agrees"], rows["ns2.x.com"]["serial"]), (False, 2023))
+        self.assertEqual(rows["ns3.x.com"]["status"], "lame")
+        self.assertEqual((rows["ns4.x.com"]["status"], rows["ns4.x.com"]["agrees"]), ("unreachable", False))
+
+    def test_lost_serial_query_does_not_make_a_server_unreachable(self):
+        net = self.internet()
+        del net.table[("10.1.0.1", "x.com", "SOA")]
+        row = d.audit("x.com", send=net)["servers"][0]
+        self.assertEqual((row["status"], row["agrees"], row["serial"]), ("ok", True, None))
+
+    def test_healthy_zone_is_consistent(self):
+        net = self.internet()
+        for address in ("10.1.0.2", "10.1.0.3", "10.1.0.4"):
+            net.table[(address, "x.com", "A")] = net.table[("10.1.0.1", "x.com", "A")]
+            net.table[(address, "x.com", "SOA")] = net.table[("10.1.0.1", "x.com", "SOA")]
+        self.assertTrue(d.audit("x.com", send=net)["consistent"])
 
 
 if __name__ == "__main__":

@@ -4,6 +4,7 @@ It never asks a recursive resolver such as 8.8.8.8. It starts at a root server
 and follows referrals down to the authoritative server, recording every hop.
 
     python dnsresolver.py example.com [A|AAAA|NS|CNAME|MX|TXT|SOA]
+    python dnsresolver.py example.com --audit     compare the answers of every nameserver
 """
 import ipaddress
 import secrets
@@ -11,6 +12,7 @@ import socket
 import struct
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 ROOT_SERVERS = {
@@ -54,6 +56,9 @@ class Result:
     status: str
     answers: list
     steps: list = field(default_factory=list)
+    name: str = ""      # the name that was finally answered (the end of a CNAME chain)
+    zone: str = "."     # the zone whose servers gave the final reply
+    nameservers: list = field(default_factory=list)  # [(host, ip or None)] for that zone
 
 
 def normalize(name):
@@ -194,14 +199,18 @@ def query(server_ip, name, qtype, timeout=3.0):
     return msg, (time.perf_counter() - start) * 1000
 
 
-def _ask_any(servers, name, qtype, send):
+def _ask_any(servers, name, qtype, send, failed):
     last = None
     for server in servers[:4]:
+        started = time.perf_counter()
         try:
             msg, ms = send(server[1], name, qtype)
             return msg, server, ms
         except (OSError, DNSError) as exc:
             last = exc
+            # A silent server costs a full timeout. Recording it keeps the trace honest about
+            # where the time went.
+            failed(server, (time.perf_counter() - started) * 1000)
     raise DNSError(f"no nameserver answered for {name}: {last}")
 
 
@@ -221,31 +230,36 @@ def resolve(name, qtype="A", send=query, steps=None, depth=0):
         raise DNSError("too many nested lookups (CNAME or nameserver loop?)")
 
     servers, zone = list(ROOT_SERVERS.items()), "."
+    nameservers = list(servers)
     for _ in range(MAX_HOPS):
-        msg, server, ms = _ask_any(servers, name, qtype, send)
+        def failed(server, ms, zone=zone):
+            steps.append({"server": server[0], "ip": server[1], "zone": zone, "depth": depth,
+                          "question": f"{name} {qtype}", "ms": round(ms, 1), "outcome": "no reply"})
+
+        msg, server, ms = _ask_any(servers, name, qtype, send, failed)
         step = {"server": server[0], "ip": server[1], "zone": zone, "depth": depth,
                 "question": f"{name} {qtype}", "ms": round(ms, 1)}
         steps.append(step)
 
         if msg.rcode != 0:
             step["outcome"] = RCODES.get(msg.rcode, f"RCODE{msg.rcode}")
-            return Result(step["outcome"], [], steps)
+            return Result(step["outcome"], [], steps, name, zone, nameservers)
 
         answers = [r for r in msg.answers if r.name == name and r.type == qtype]
         if answers:
             step["outcome"] = "answer"
-            return Result("NOERROR", answers, steps)
+            return Result("NOERROR", answers, steps, name, zone, nameservers)
 
         cname = next((r for r in msg.answers if r.name == name and r.type == "CNAME"), None)
         if cname:
             step["outcome"] = f"alias of {cname.data}"
             rest = resolve(cname.data, qtype, send, steps, depth + 1)
-            return Result(rest.status, [cname] + rest.answers, steps)
+            return Result(rest.status, [cname] + rest.answers, steps, rest.name, rest.zone, rest.nameservers)
 
         referral = [r for r in msg.authorities if r.type == "NS"]
         if not referral:
             step["outcome"] = "no data"
-            return Result("NODATA", [], steps)
+            return Result("NODATA", [], steps, name, zone, nameservers)
 
         new_zone = referral[0].name
         in_zone = new_zone == "." or name == new_zone or name.endswith("." + new_zone)
@@ -270,15 +284,78 @@ def resolve(name, qtype="A", send=query, steps=None, depth=0):
         if not servers:
             raise DNSError(f"could not find an address for any {new_zone} nameserver")
         zone = new_zone
+        nameservers = [(r.data, glue.get(r.data)) for r in referral]
     raise DNSError("too many referrals")
 
 
-def main(argv):
-    if not 2 <= len(argv) <= 3:
-        print(__doc__.strip().splitlines()[-1].strip(), file=sys.stderr)
-        return 2
+def _check_server(host, ip, name, qtype, zone, send):
+    row = {"server": host, "ip": ip, "status": "ok", "answers": [], "serial": None, "ms": None}
     try:
-        result = resolve(argv[1], argv[2] if len(argv) == 3 else "A")
+        if ip is None:  # the referral named this server without giving its address
+            found = resolve(host, "A", send)
+            ip = row["ip"] = next((a.data for a in found.answers if a.type == "A"), None)
+            if ip is None:
+                raise DNSError("nameserver has no address")
+        msg, ms = send(ip, name, qtype)
+        row["ms"] = round(ms, 1)
+        row["answers"] = sorted(r.data for r in msg.answers if r.name == name and r.type == qtype)
+        if not msg.authoritative:
+            # Listed as a nameserver for the zone but does not claim authority: a lame delegation.
+            row["status"] = "lame"
+    except (OSError, DNSError) as exc:
+        row.update(status="unreachable", error=str(exc))
+        return row
+    try:
+        # A second, separate question. If only this one is lost, the server did answer and
+        # must not be reported as unreachable: the serial is simply unknown.
+        soa, _ = send(ip, zone, "SOA")
+        serial = next((r.data.split()[-1] for r in soa.answers if r.type == "SOA"), None)
+        row["serial"] = int(serial) if serial else None
+    except (OSError, DNSError):
+        pass
+    return row
+
+
+def audit(name, qtype="A", send=query, limit=8):
+    """Ask every nameserver of the answering zone the same question and compare what they say.
+
+    A normal lookup stops at the first server that replies, so it cannot notice that another
+    server of the same zone is down, not authoritative, or still serving an older zone file.
+    """
+    result = resolve(name, qtype, send)
+    targets = result.nameservers[:limit]
+    with ThreadPoolExecutor(max_workers=max(1, len(targets))) as pool:
+        rows = list(pool.map(lambda t: _check_server(t[0], t[1], result.name, qtype.upper(), result.zone, send),
+                             targets))
+    replies = [tuple(r["answers"]) for r in rows if r["status"] != "unreachable"]
+    # The most common reply is the reference. Servers that say something else are flagged, not
+    # called wrong: geo-aware and load-balanced zones answer differently on purpose.
+    reference = max(sorted(set(replies)), key=replies.count) if replies else ()
+    for row in rows:
+        row["agrees"] = row["status"] != "unreachable" and tuple(row["answers"]) == reference
+    serials = sorted({r["serial"] for r in rows if r["serial"] is not None})
+    return {"name": result.name, "type": qtype.upper(), "zone": result.zone, "servers": rows,
+            "reference": list(reference), "serials": serials,
+            "consistent": all(r["agrees"] and r["status"] == "ok" for r in rows) and len(serials) <= 1}
+
+
+def main(argv):
+    args = [a for a in argv[1:] if a != "--audit"]
+    if not 1 <= len(args) <= 2:
+        print("usage: python dnsresolver.py <name> [A|AAAA|NS|CNAME|MX|TXT|SOA] [--audit]", file=sys.stderr)
+        return 2
+    qtype = args[1] if len(args) == 2 else "A"
+    try:
+        if "--audit" in argv:
+            report = audit(args[0], qtype)
+            print(f"{report['name']} {report['type']} as seen by every nameserver of {report['zone']}\n")
+            for row in report["servers"]:
+                note = row.get("error") or ("" if row["agrees"] else "differs from the majority")
+                print(f"  {row['server']:<28} {row['status']:<12} serial {row['serial']}  "
+                      f"{row['ms']} ms  {', '.join(row['answers']) or '-'}  {note}")
+            print("\nconsistent" if report["consistent"] else "\ndifferences found")
+            return 0 if report["consistent"] else 1
+        result = resolve(args[0], qtype)
     except DNSError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

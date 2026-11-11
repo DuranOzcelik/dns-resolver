@@ -20,9 +20,15 @@ class Handler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         if url.path == "/":
             return self._send(INDEX.read_bytes(), "text/html; charset=utf-8")
+        params = parse_qs(url.query)
+        if url.path == "/api/audit":
+            try:
+                body = dnsresolver.audit(params.get("name", [""])[0], params.get("type", ["A"])[0])
+            except dnsresolver.DNSError as exc:
+                body = {"error": str(exc), "servers": []}
+            return self._send(json.dumps(body).encode(), "application/json")
         if url.path != "/api/resolve":
             return self.send_error(404)
-        params = parse_qs(url.query)
         steps, start = [], time.perf_counter()
         body = {"status": "ERROR", "answers": []}
         try:
