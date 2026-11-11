@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DNS Resolver</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --line: #2b323c; --text: #e6edf3; --muted: #8b949e;
+    --accent: #58a6ff; --ok: #3fb950; --warn: #d29922; --bad: #f85149;
+    --mono: ui-monospace, "Cascadia Code", Consolas, monospace;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg: #f6f8fa; --panel: #fff; --line: #d0d7de; --text: #1f2328; --muted: #59636e;
+            --accent: #0969da; --ok: #1a7f37; --warn: #9a6700; --bad: #cf222e; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.5 system-ui, "Segoe UI", sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 40px 16px 64px; }
+  h1 { font-size: 26px; margin: 0 0 4px; letter-spacing: -0.01em; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted);
+       margin: 32px 0 10px; font-weight: 600; }
+  p.lead { color: var(--muted); margin: 0 0 24px; }
+  form { display: flex; gap: 8px; flex-wrap: wrap; }
+  input, select, button { font: inherit; color: inherit; background: var(--panel);
+       border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+  input { flex: 1 1 260px; font-family: var(--mono); min-width: 0; }
+  button { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600;
+           cursor: pointer; padding-inline: 20px; }
+  button:disabled { opacity: .6; cursor: progress; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .examples { margin-top: 10px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
+              color: var(--muted); font-size: 13px; }
+  .examples button { background: none; color: var(--accent); border-color: var(--line);
+                     font: 13px var(--mono); padding: 3px 9px; border-radius: 999px; }
+  .summary { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 28px; }
+  .badge { font: 600 12px var(--mono); padding: 3px 9px; border-radius: 999px; border: 1px solid currentColor; }
+  .ok { color: var(--ok); } .warn { color: var(--warn); } .bad { color: var(--bad); }
+  .muted { color: var(--muted); }
+  ol { list-style: none; margin: 0; padding: 0; }
+  li.step { position: relative; background: var(--panel); border: 1px solid var(--line);
+            border-radius: 10px; padding: 12px 14px 12px 50px; margin-bottom: 8px; }
+  li.step .n { position: absolute; left: 14px; top: 13px; width: 24px; height: 24px; border-radius: 50%;
+               background: var(--bg); border: 1px solid var(--line); font: 600 12px/22px var(--mono);
+               text-align: center; color: var(--muted); }
+  .row { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .server { font-family: var(--mono); font-weight: 600; overflow-wrap: anywhere; }
+  .meta { font: 13px var(--mono); color: var(--muted); overflow-wrap: anywhere; }
+  .zone { color: var(--accent); }
+  .bar { height: 3px; border-radius: 2px; background: var(--accent); opacity: .55; margin-top: 8px; min-width: 2px; }
+  .tablewrap { overflow-x: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+  table { border-collapse: collapse; width: 100%; font: 13px var(--mono); }
+  th, td { text-align: left; padding: 9px 14px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  td:last-child { white-space: normal; overflow-wrap: anywhere; }
+  th { color: var(--muted); font-weight: 600; }
+  tr:last-child td { border-bottom: 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>DNS Resolver</h1>
+  <p class="lead">Resolves a name the way the internet does: starting at a root server and following
+    referrals down to the authoritative server. No 8.8.8.8, no cache, every hop shown.</p>
+
+  <form id="form">
+    <input id="name" name="name" placeholder="www.example.com" aria-label="Domain name"
+           autocomplete="off" autocapitalize="off" spellcheck="false" required>
+    <select id="type" name="type" aria-label="Record type">
+      <option>A</option><option>AAAA</option><option>MX</option><option>NS</option>
+      <option>TXT</option><option>CNAME</option><option>SOA</option>
+    </select>
+    <button id="go">Resolve</button>
+  </form>
+  <div class="examples">Try:
+    <button type="button" data-name="www.github.com" data-type="A">www.github.com</button>
+    <button type="button" data-name="gmail.com" data-type="MX">gmail.com MX</button>
+    <button type="button" data-name="wikipedia.org" data-type="AAAA">wikipedia.org AAAA</button>
+    <button type="button" data-name="does-not-exist-12345.com" data-type="A">a name that does not exist</button>
+  </div>
+
+  <div id="out" aria-live="polite"></div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+// every value from the network goes through textContent, never innerHTML
+const el = (tag, cls, text) => {
+  const node = document.createElement(tag);
+  if (cls) node.className = cls;
+  if (text !== undefined) node.textContent = text;
+  return node;
+};
+
+async function run(name, type) {
+  $("name").value = name; $("type").value = type;
+  history.replaceState(null, "", "?" + new URLSearchParams({ name, type }));
+  $("go").disabled = true; $("go").textContent = "Resolving…";
+  let data;
+  try {
+    const res = await fetch("/api/resolve?" + new URLSearchParams({ name, type }));
+    data = await res.json();
+  } catch (err) {
+    data = { status: "ERROR", error: "Could not reach the local server.", steps: [], answers: [], total_ms: 0 };
+  }
+  $("go").disabled = false; $("go").textContent = "Resolve";
+  render(data);
+}
+
+function render(data) {
+  const out = $("out");
+  out.replaceChildren();
+
+  const tone = data.status === "NOERROR" ? "ok" : data.status === "ERROR" ? "bad" : "warn";
+  const summary = el("div", "summary");
+  summary.append(el("span", "badge " + tone, data.status),
+    el("span", "muted", `${data.steps.length} quer${data.steps.length === 1 ? "y" : "ies"} · ${data.total_ms} ms`));
+  if (data.error) summary.append(el("span", "bad", data.error));
+  out.append(summary);
+
+  if (data.steps.length) {
+    out.append(el("h2", "", "Path"));
+    const slowest = Math.max(...data.steps.map((s) => s.ms), 1);
+    const list = el("ol");
+    data.steps.forEach((s, i) => {
+      const li = el("li", "step");
+      li.style.marginLeft = Math.min(s.depth, 4) * 20 + "px";
+      const top = el("div", "row");
+      top.append(el("span", "server", s.server), el("span", "meta", s.ms + " ms"));
+      const mid = el("div", "meta");
+      mid.append(s.ip + " · serves ", el("span", "zone", s.zone === "." ? ". (root)" : s.zone));
+      const bottom = el("div", "row");
+      bottom.append(el("span", "meta", "asked: " + s.question),
+        el("span", s.outcome === "answer" ? "ok" : "", "→ " + (s.outcome || "no reply")));
+      const bar = el("div", "bar");
+      bar.style.width = (s.ms / slowest) * 100 + "%";
+      li.append(el("span", "n", i + 1), top, mid, bottom, bar);
+      list.append(li);
+    });
+    out.append(list);
+  }
+
+  if (data.answers.length) {
+    out.append(el("h2", "", "Answer"));
+    const table = el("table");
+    const head = el("tr");
+    ["Name", "TTL", "Type", "Data"].forEach((h) => head.append(el("th", "", h)));
+    table.append(head);
+    data.answers.forEach((r) => {
+      const tr = el("tr");
+      [r.name, r.ttl, r.type, r.data].forEach((v) => tr.append(el("td", "", v)));
+      table.append(tr);
+    });
+    const wrap = el("div", "tablewrap");
+    wrap.append(table);
+    out.append(wrap);
+  }
+}
+
+$("form").addEventListener("submit", (e) => { e.preventDefault(); run($("name").value.trim(), $("type").value); });
+document.querySelectorAll(".examples button").forEach((b) =>
+  b.addEventListener("click", () => run(b.dataset.name, b.dataset.type)));
+
+const params = new URLSearchParams(location.search);
+if (params.get("name")) run(params.get("name"), params.get("type") || "A");
+</script>
+</body>
+</html>
