@@ -5,14 +5,20 @@ An iterative DNS resolver written in pure Python. It builds and parses DNS packe
 the same walk a real recursive resolver performs. It never forwards the question to
 `8.8.8.8` or to the operating system.
 
+It can also do something a normal lookup cannot: ask **every** nameserver of a zone the same
+question and show where they disagree.
+
 No dependencies. Only the Python standard library.
 
-![Web UI resolving www.github.com hop by hop](docs/screenshot.png)
+![Web UI: the lookup of www.github.com as a timeline, followed by a comparison of all eight nameservers](docs/screenshot.png)
 
 ## What it does
 
 - Encodes queries and decodes responses at the byte level, including name compression pointers
 - Walks root → TLD → authoritative servers and records every hop with its latency
+- Compares all nameservers of a zone: their answers, whether they are authoritative, and
+  their zone serial numbers (`--audit`)
+- Records servers that did not reply, so the trace shows what a timeout cost
 - Follows `CNAME` chains and resolves nameservers that come without glue records
 - Falls back to TCP when a UDP response is truncated
 - Supports `A`, `AAAA`, `NS`, `CNAME`, `MX`, `TXT` and `SOA`
@@ -45,6 +51,26 @@ Other record types:
 python dnsresolver.py gmail.com MX
 ```
 
+Compare every nameserver of the zone:
+
+```bash
+python dnsresolver.py github.com --audit
+```
+
+```
+github.com A as seen by every nameserver of github.com
+
+  ns-520.awsdns-01.net     ok   serial 1           67.0 ms  140.82.121.3
+  ns-421.awsdns-52.com     ok   serial 1           34.0 ms  140.82.121.3
+  ns-1707.awsdns-21.co.uk  ok   serial 1           72.0 ms  140.82.121.4  differs from the majority
+  dns1.p08.nsone.net       ok   serial 1656468023  74.8 ms  140.82.121.3
+  dns3.p08.nsone.net       ok   serial 1656468023  78.9 ms  140.82.121.4  differs from the majority
+  ...
+differences found
+```
+
+The exit code is 0 when all servers agree and 1 when they do not, so it can run in a script.
+
 Web UI:
 
 ```bash
@@ -66,6 +92,20 @@ Then open <http://127.0.0.1:8053>. The server listens on the loopback interface 
 
 ## Details that were not obvious
 
+- **A successful lookup hides broken servers.** A resolver stops at the first nameserver
+  that answers. If one of four servers is down, not authoritative for the zone (a "lame
+  delegation") or still serving last week's zone file, most lookups still succeed and nobody
+  notices. The audit asks all of them and compares the replies and the SOA serial.
+- **Different answers are not always a fault.** The real output above shows it: GitHub runs
+  two DNS providers with unrelated serial schemes, and its servers rotate between two
+  addresses to spread load. The tool therefore reports differences and leaves the verdict to
+  the reader. Unreachable and non-authoritative servers are the findings that are always bad.
+- **One lost packet must not condemn a server.** The audit sends two questions per server.
+  If the answer arrives but the serial query is lost, the server is reported as working with
+  an unknown serial, not as unreachable. A test covers exactly this case.
+- **Timeouts belong in the trace.** A silent server costs a full timeout before the next one
+  is tried. Those attempts are recorded as their own rows, otherwise the total time would be
+  larger than the sum of the steps shown.
 - **Compression pointers can loop.** A name in a DNS packet may point back to an earlier
   offset. A malformed packet can point at itself, so the parser limits the number of jumps.
 - **Referrals must make progress.** A referral is accepted only if it points to a zone that
@@ -82,7 +122,8 @@ Then open <http://127.0.0.1:8053>. The server listens on the loopback interface 
 
 The tests run offline. Packets are assembled byte by byte and the network is replaced with a
 fake DNS tree, so referral loops, CNAME loops, timeouts and malformed packets can be tested
-deterministically.
+deterministically. The audit is tested against a zone with four nameservers: one in sync, one
+with an old serial, one that is not authoritative and one that never replies. 19 tests.
 
 ```bash
 python -m unittest -v

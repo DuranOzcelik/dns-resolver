@@ -6,62 +6,105 @@
 <title>DNS Resolver</title>
 <style>
   :root {
-    --bg: #0d1117; --panel: #161b22; --line: #2b323c; --text: #e6edf3; --muted: #8b949e;
-    --accent: #58a6ff; --ok: #3fb950; --warn: #d29922; --bad: #f85149;
-    --mono: ui-monospace, "Cascadia Code", Consolas, monospace;
-  }
-  @media (prefers-color-scheme: light) {
-    :root { --bg: #f6f8fa; --panel: #fff; --line: #d0d7de; --text: #1f2328; --muted: #59636e;
-            --accent: #0969da; --ok: #1a7f37; --warn: #9a6700; --bad: #cf222e; }
+    --paper: #e4ece8; --sheet: #f5f9f7; --ink: #16201c; --soft: #4a5751; --rule: #bfcdc6; --rule-soft: #d3ded8;
+    --go: #0d6657; --go-ink: #f4fbf8; --go-tint: #dcebe5; --found: #a8480a; --found-tint: #f3ddcb; --stop: #a3261f;
+    --sans: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+    --mono: "Cascadia Mono", "SF Mono", Consolas, ui-monospace, monospace;
   }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--text);
-         font: 15px/1.5 system-ui, "Segoe UI", sans-serif; }
-  main { max-width: 860px; margin: 0 auto; padding: 40px 16px 64px; }
-  h1 { font-size: 26px; margin: 0 0 4px; letter-spacing: -0.01em; }
-  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted);
-       margin: 32px 0 10px; font-weight: 600; }
-  p.lead { color: var(--muted); margin: 0 0 24px; }
-  form { display: flex; gap: 8px; flex-wrap: wrap; }
-  input, select, button { font: inherit; color: inherit; background: var(--panel);
-       border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
-  input { flex: 1 1 260px; font-family: var(--mono); min-width: 0; }
-  button { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600;
-           cursor: pointer; padding-inline: 20px; }
-  button:disabled { opacity: .6; cursor: progress; }
-  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  .examples { margin-top: 10px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
-              color: var(--muted); font-size: 13px; }
-  .examples button { background: none; color: var(--accent); border-color: var(--line);
-                     font: 13px var(--mono); padding: 3px 9px; border-radius: 999px; }
-  .summary { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 28px; }
-  .badge { font: 600 12px var(--mono); padding: 3px 9px; border-radius: 999px; border: 1px solid currentColor; }
-  .ok { color: var(--ok); } .warn { color: var(--warn); } .bad { color: var(--bad); }
-  .muted { color: var(--muted); }
-  ol { list-style: none; margin: 0; padding: 0; }
-  li.step { position: relative; background: var(--panel); border: 1px solid var(--line);
-            border-radius: 10px; padding: 12px 14px 12px 50px; margin-bottom: 8px; }
-  li.step .n { position: absolute; left: 14px; top: 13px; width: 24px; height: 24px; border-radius: 50%;
-               background: var(--bg); border: 1px solid var(--line); font: 600 12px/22px var(--mono);
-               text-align: center; color: var(--muted); }
-  .row { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-  .server { font-family: var(--mono); font-weight: 600; overflow-wrap: anywhere; }
-  .meta { font: 13px var(--mono); color: var(--muted); overflow-wrap: anywhere; }
-  .zone { color: var(--accent); }
-  .bar { height: 3px; border-radius: 2px; background: var(--accent); opacity: .55; margin-top: 8px; min-width: 2px; }
-  .tablewrap { overflow-x: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
-  table { border-collapse: collapse; width: 100%; font: 13px var(--mono); }
-  th, td { text-align: left; padding: 9px 14px; border-bottom: 1px solid var(--line); white-space: nowrap; }
-  td:last-child { white-space: normal; overflow-wrap: anywhere; }
-  th { color: var(--muted); font-weight: 600; }
-  tr:last-child td { border-bottom: 0; }
+  html { scrollbar-color: var(--rule) var(--paper); }
+  ::selection { background: var(--go); color: var(--go-ink); }
+  body { margin: 0; background: var(--paper); color: var(--ink); font: 15px/1.5 var(--sans); }
+  main { max-width: 1080px; margin: 0 auto; padding: 44px 24px 80px; }
+  h1 { font-size: 17px; font-weight: 650; margin: 0; letter-spacing: -0.005em; }
+  .intro { color: var(--soft); margin: 2px 0 24px; max-width: 68ch; }
+  h2 { font-size: 15px; font-weight: 650; margin: 44px 0 4px; }
+  .note { color: var(--soft); margin: 0 0 14px; max-width: 72ch; }
+  .mono, td, input { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+  /* query bar: one joined control */
+  form { display: flex; border: 1px solid var(--ink); border-radius: 6px; background: var(--sheet); overflow: hidden;
+         box-shadow: 0 1px 0 var(--rule), 0 10px 24px -18px rgba(27, 33, 31, .45); }
+  form:focus-within { outline: 2px solid var(--go); outline-offset: 2px; }
+  input { flex: 1; min-width: 0; border: 0; background: none; color: inherit; font-size: 18px; padding: 15px 16px; caret-color: var(--go); }
+  input::placeholder { color: #5b6862; }
+  input:focus { outline: none; }
+  select { border: 0; border-left: 1px solid var(--rule); background: none; color: inherit; font: 600 14px var(--mono);
+           padding: 0 12px; cursor: pointer; }
+  select:focus-visible { outline: 2px solid var(--go); outline-offset: -3px; }
+  .primary { border: 0; background: var(--go); color: var(--go-ink); font: 650 15px var(--sans); padding: 0 26px; cursor: pointer;
+             transition: background .16s cubic-bezier(.2, .8, .2, 1); }
+  .primary:hover { background: #0a5346; }
+  .primary:active { background: #083f36; }
+  .primary:focus-visible { outline: 2px solid var(--ink); outline-offset: -4px; }
+  .primary:disabled { background: var(--soft); cursor: progress; }
+  .examples { margin-top: 12px; color: var(--soft); font-size: 14px; display: flex; gap: 4px 16px; flex-wrap: wrap; }
+  .link { border: 0; background: none; padding: 2px 0; font: 14px var(--mono); color: var(--go); cursor: pointer;
+          text-decoration: underline; text-decoration-color: var(--rule); text-underline-offset: 4px;
+          transition: text-decoration-color .16s; }
+  .link:hover { text-decoration-color: var(--go); }
+  .link:focus-visible, .ghost:focus-visible { outline: 2px solid var(--go); outline-offset: 3px; border-radius: 3px; }
+
+  /* headline answer */
+  .verdict { margin-top: 40px; padding-top: 22px; border-top: 2px solid var(--ink); }
+  .verdict-line { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; font: 600 30px/1.2 var(--mono); letter-spacing: -0.02em; overflow-wrap: anywhere; }
+  .verdict-line svg { flex: none; width: 26px; height: 14px; align-self: center; color: var(--soft); }
+  .verdict-line .value { color: var(--found); }
+  .verdict-line .none { color: var(--stop); }
+  .facts { margin: 10px 0 0; color: var(--soft); display: flex; gap: 6px 22px; flex-wrap: wrap; }
+  .facts b { color: var(--ink); font-weight: 650; }
+  .problem { color: var(--stop); }
+
+  /* waterfall */
+  .scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th { text-align: left; font: 600 12px var(--sans); color: var(--soft); padding: 0 14px 8px 0; border-bottom: 1px solid var(--ink); white-space: nowrap; }
+  td { padding: 9px 14px 9px 0; border-bottom: 1px solid var(--rule-soft); vertical-align: middle; white-space: nowrap; }
+  th.num, td.num { text-align: right; }
+  tr:hover td { background: var(--sheet); }
+  .zone { display: inline-block; min-width: 86px; font-weight: 600; }
+  .server small { display: block; color: var(--soft); font-size: 12px; }
+  .outcome { font-family: var(--sans); font-size: 14px; }
+  .outcome.answer { color: var(--found); font-weight: 650; }
+  .outcome.silent { color: var(--stop); }
+  .silent-row .bar { background: var(--stop); opacity: .55; }
+  .restart td { font: 13px var(--sans); color: var(--soft); background: var(--rule-soft); padding: 5px 10px; }
+  .restart td b { font-family: var(--mono); color: var(--ink); font-weight: 600; }
+  .time { width: 34%; min-width: 220px; padding-right: 0; }
+  .track { position: relative; height: 18px; background: repeating-linear-gradient(to right, var(--rule) 0 1px, transparent 1px 25%); border-right: 1px solid var(--rule); }
+  .bar { position: absolute; top: 5px; height: 8px; min-width: 3px; background: var(--go); border-radius: 1px; }
+  .answer-row .bar { background: var(--found); }
+  .ticks { display: flex; justify-content: space-between; font: 11px var(--mono); color: var(--soft); }
+  td.wrap { white-space: normal; overflow-wrap: anywhere; }
+
+  /* nameserver comparison */
+  .ghost { border: 1px solid var(--ink); background: none; color: var(--ink); border-radius: 6px; font: 600 14px var(--sans);
+           padding: 8px 14px; cursor: pointer; transition: background .16s, color .16s; }
+  .ghost:hover { background: var(--ink); color: var(--paper); }
+  .ghost:disabled { border-color: var(--rule); color: var(--soft); background: none; cursor: progress; }
+  .mark { display: inline-block; font: 600 12px var(--sans); padding: 2px 8px; border-radius: 3px; }
+  .mark.same { background: var(--go-tint); color: var(--go); }
+  .mark.differs { background: var(--found-tint); color: var(--found); }
+  .mark.bad { background: #f3d9d6; color: var(--stop); }
+  .skeleton td { height: 37px; }
+  .skeleton span { display: block; height: 10px; width: 60%; background: var(--rule-soft); border-radius: 2px; animation: pulse 1.1s ease-in-out infinite alternate; }
+  @keyframes pulse { to { opacity: .45; } }
+  @media (prefers-reduced-motion: reduce) { .skeleton span { animation: none; } * { transition: none !important; } }
+  @media (max-width: 640px) {
+    main { padding: 28px 16px 56px; }
+    form { flex-wrap: wrap; }
+    input { flex-basis: 100%; border-bottom: 1px solid var(--rule); }
+    select { border-left: 0; flex: 1; height: 46px; }
+    .primary { height: 46px; }
+    .verdict-line { font-size: 22px; }
+  }
 </style>
 </head>
 <body>
 <main>
   <h1>DNS Resolver</h1>
-  <p class="lead">Resolves a name the way the internet does: starting at a root server and following
-    referrals down to the authoritative server. No 8.8.8.8, no cache, every hop shown.</p>
+  <p class="intro">Looks a name up the way a resolver does: it asks a root server, follows each referral, and stops at the
+    server that owns the answer. Nothing is cached and no public resolver is involved.</p>
 
   <form id="form">
     <input id="name" name="name" placeholder="www.example.com" aria-label="Domain name"
@@ -70,13 +113,13 @@
       <option>A</option><option>AAAA</option><option>MX</option><option>NS</option>
       <option>TXT</option><option>CNAME</option><option>SOA</option>
     </select>
-    <button id="go">Resolve</button>
+    <button class="primary" id="go">Resolve</button>
   </form>
-  <div class="examples">Try:
-    <button type="button" data-name="www.github.com" data-type="A">www.github.com</button>
-    <button type="button" data-name="gmail.com" data-type="MX">gmail.com MX</button>
-    <button type="button" data-name="wikipedia.org" data-type="AAAA">wikipedia.org AAAA</button>
-    <button type="button" data-name="does-not-exist-12345.com" data-type="A">a name that does not exist</button>
+  <div class="examples">Try
+    <button type="button" class="link" data-name="www.github.com" data-type="A">www.github.com</button>
+    <button type="button" class="link" data-name="gmail.com" data-type="MX">gmail.com MX</button>
+    <button type="button" class="link" data-name="wikipedia.org" data-type="AAAA">wikipedia.org AAAA</button>
+    <button type="button" class="link" data-name="does-not-exist-12345.com" data-type="A">a name that does not exist</button>
   </div>
 
   <div id="out" aria-live="polite"></div>
@@ -91,70 +134,140 @@ const el = (tag, cls, text) => {
   if (text !== undefined) node.textContent = text;
   return node;
 };
+const ARROW = '<svg viewBox="0 0 26 14" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M0 7h24M18 1l6 6-6 6"/></svg>';
+const head = (labels) => {
+  const row = el("tr");
+  labels.forEach(([text, cls]) => row.append(el("th", cls || "", text)));
+  const thead = el("thead"); thead.append(row);
+  return thead;
+};
+const section = (title, note) => {
+  const parts = [el("h2", "", title)];
+  if (note) parts.push(el("p", "note", note));
+  return parts;
+};
 
 async function run(name, type) {
   $("name").value = name; $("type").value = type;
   history.replaceState(null, "", "?" + new URLSearchParams({ name, type }));
-  $("go").disabled = true; $("go").textContent = "Resolving…";
+  $("go").disabled = true; $("go").textContent = "Resolving";
   let data;
   try {
-    const res = await fetch("/api/resolve?" + new URLSearchParams({ name, type }));
-    data = await res.json();
+    data = await fetch("/api/resolve?" + new URLSearchParams({ name, type })).then((r) => r.json());
   } catch (err) {
-    data = { status: "ERROR", error: "Could not reach the local server.", steps: [], answers: [], total_ms: 0 };
+    data = { status: "ERROR", error: "The local server did not answer. Is web.py still running?", steps: [], answers: [], total_ms: 0 };
   }
   $("go").disabled = false; $("go").textContent = "Resolve";
-  render(data);
+  render(data, name, type);
 }
 
-function render(data) {
+function render(data, name, type) {
   const out = $("out");
   out.replaceChildren();
+  const final = data.answers.filter((r) => r.type === type);
 
-  const tone = data.status === "NOERROR" ? "ok" : data.status === "ERROR" ? "bad" : "warn";
-  const summary = el("div", "summary");
-  summary.append(el("span", "badge " + tone, data.status),
-    el("span", "muted", `${data.steps.length} quer${data.steps.length === 1 ? "y" : "ies"} · ${data.total_ms} ms`));
-  if (data.error) summary.append(el("span", "bad", data.error));
-  out.append(summary);
+  const verdict = el("div", "verdict");
+  const line = el("div", "verdict-line");
+  line.append(name);
+  line.insertAdjacentHTML("beforeend", ARROW); // static markup defined above, no user data
+  if (final.length) line.append(el("span", "value", final[0].data + (final.length > 1 ? `  +${final.length - 1} more` : "")));
+  else line.append(el("span", "none", { NXDOMAIN: "does not exist", NODATA: "no " + type + " record", ERROR: "lookup failed" }[data.status] || data.status));
+  const facts = el("p", "facts");
+  const fact = (label, value) => { const s = el("span", "", label + " "); s.append(el("b", "", value)); return s; };
+  facts.append(fact("Status", data.status), fact("Queries sent", data.steps.length), fact("Total time", data.total_ms + " ms"));
+  verdict.append(line, facts);
+  if (data.error) verdict.append(el("p", "problem", data.error));
+  out.append(verdict);
 
   if (data.steps.length) {
-    out.append(el("h2", "", "Path"));
-    const slowest = Math.max(...data.steps.map((s) => s.ms), 1);
-    const list = el("ol");
-    data.steps.forEach((s, i) => {
-      const li = el("li", "step");
-      li.style.marginLeft = Math.min(s.depth, 4) * 20 + "px";
-      const top = el("div", "row");
-      top.append(el("span", "server", s.server), el("span", "meta", s.ms + " ms"));
-      const mid = el("div", "meta");
-      mid.append(s.ip + " · serves ", el("span", "zone", s.zone === "." ? ". (root)" : s.zone));
-      const bottom = el("div", "row");
-      bottom.append(el("span", "meta", "asked: " + s.question),
-        el("span", s.outcome === "answer" ? "ok" : "", "→ " + (s.outcome || "no reply")));
-      const bar = el("div", "bar");
-      bar.style.width = (s.ms / slowest) * 100 + "%";
-      li.append(el("span", "n", i + 1), top, mid, bottom, bar);
-      list.append(li);
+    const total = data.steps.reduce((sum, s) => sum + s.ms, 0) || 1;
+    out.append(...section("Path", "Each row is one query. Bars are placed on a shared time axis, so the gaps show where the lookup spent its time."));
+    const table = el("table");
+    const thead = head([["Zone"], ["Asked"], ["Question"], ["Reply"], ["ms", "num"], ["", "time"]]);
+    const ticks = el("div", "ticks");
+    [0, .25, .5, .75, 1].forEach((f) => ticks.append(el("span", "", Math.round(total * f))));
+    thead.querySelector(".time").append(ticks);
+    const body = el("tbody");
+    let elapsed = 0, depth = 0;
+    data.steps.forEach((s) => {
+      if (s.depth !== depth) {
+        const row = el("tr", "restart"); const cell = el("td"); cell.colSpan = 6;
+        cell.append(s.depth > depth ? "Side lookup, starting again at the root for " : "Back to ", el("b", "", s.question));
+        row.append(cell); body.append(row); depth = s.depth;
+      }
+      const row = el("tr", s.outcome === "answer" ? "answer-row" : s.outcome === "no reply" ? "silent-row" : "");
+      const server = el("td", "server", s.server); server.append(el("small", "", s.ip));
+      const time = el("td", "time"); const track = el("div", "track"); const bar = el("div", "bar");
+      bar.style.left = (elapsed / total) * 100 + "%"; bar.style.width = (s.ms / total) * 100 + "%";
+      track.append(bar); time.append(track);
+      const zone = el("td"); zone.append(el("span", "zone", s.zone === "." ? ". root" : s.zone));
+      row.append(zone, server, el("td", "", s.question),
+        el("td", "outcome" + (s.outcome === "answer" ? " answer" : s.outcome === "no reply" ? " silent" : ""), s.outcome || "no reply"),
+        el("td", "num", s.ms.toFixed(1)), time);
+      body.append(row); elapsed += s.ms;
     });
-    out.append(list);
+    table.append(thead, body);
+    const wrap = el("div", "scroll"); wrap.append(table); out.append(wrap);
   }
 
   if (data.answers.length) {
-    out.append(el("h2", "", "Answer"));
+    out.append(...section("Records returned"));
     const table = el("table");
-    const head = el("tr");
-    ["Name", "TTL", "Type", "Data"].forEach((h) => head.append(el("th", "", h)));
-    table.append(head);
+    const body = el("tbody");
     data.answers.forEach((r) => {
-      const tr = el("tr");
-      [r.name, r.ttl, r.type, r.data].forEach((v) => tr.append(el("td", "", v)));
-      table.append(tr);
+      const row = el("tr");
+      row.append(el("td", "", r.name), el("td", "num", r.ttl), el("td", "", r.type), el("td", "wrap", r.data));
+      body.append(row);
     });
-    const wrap = el("div", "tablewrap");
-    wrap.append(table);
-    out.append(wrap);
+    table.append(head([["Name"], ["TTL (s)", "num"], ["Type"], ["Data"]]), body);
+    const wrap = el("div", "scroll"); wrap.append(table); out.append(wrap);
   }
+
+  if (data.status !== "ERROR" && data.steps.length) {
+    out.append(...section("Do all nameservers agree?",
+      "A lookup stops at the first server that answers. This sends the same question to every nameserver of the zone and compares the replies and the zone serial numbers."));
+    const button = el("button", "ghost", "Compare every nameserver");
+    const box = el("div");
+    button.addEventListener("click", () => compare(name, type, button, box));
+    out.append(button, box);
+  }
+}
+
+async function compare(name, type, button, box) {
+  button.disabled = true; button.textContent = "Asking every nameserver";
+  const skeleton = el("table"); const sb = el("tbody");
+  for (let i = 0; i < 4; i++) { const r = el("tr", "skeleton"); const c = el("td"); c.append(el("span")); r.append(c); sb.append(r); }
+  skeleton.append(sb); box.replaceChildren(skeleton);
+  let report;
+  try {
+    report = await fetch("/api/audit?" + new URLSearchParams({ name, type })).then((r) => r.json());
+  } catch (err) {
+    report = { error: "The local server did not answer.", servers: [] };
+  }
+  button.disabled = false; button.textContent = "Compare again";
+  if (report.error) { box.replaceChildren(el("p", "problem", report.error)); return; }
+
+  const summary = el("p", "note");
+  summary.style.marginTop = "14px";
+  summary.textContent = report.consistent
+    ? `All ${report.servers.length} nameservers of ${report.zone} give the same answer and the same serial.`
+    : `The nameservers of ${report.zone} do not all say the same thing. That is a fault when a server is unreachable, not authoritative or behind on the serial. Different addresses alone are often deliberate: large sites rotate answers to spread load.`;
+  const table = el("table"); const body = el("tbody");
+  report.servers.forEach((s) => {
+    const row = el("tr");
+    const server = el("td", "server", s.server); server.append(el("small", "", s.ip || "no address"));
+    const verdict = el("td");
+    if (s.status === "unreachable") verdict.append(el("span", "mark bad", "No reply"));
+    else if (s.status === "lame") verdict.append(el("span", "mark bad", "Not authoritative"));
+    else verdict.append(el("span", "mark " + (s.agrees ? "same" : "differs"), s.agrees ? "Same as most" : "Differs"));
+    row.append(server, verdict, el("td", "wrap", s.answers.join(", ") || (s.error || "nothing")),
+      el("td", "num", s.serial === null ? (s.status === "unreachable" ? "" : "unknown") : s.serial),
+      el("td", "num", s.ms === null ? "" : s.ms.toFixed(1)));
+    body.append(row);
+  });
+  table.append(head([["Nameserver"], ["Verdict"], [report.type + " reply"], ["Zone serial", "num"], ["ms", "num"]]), body);
+  const wrap = el("div", "scroll"); wrap.append(table);
+  box.replaceChildren(summary, wrap);
 }
 
 $("form").addEventListener("submit", (e) => { e.preventDefault(); run($("name").value.trim(), $("type").value); });
@@ -162,7 +275,11 @@ document.querySelectorAll(".examples button").forEach((b) =>
   b.addEventListener("click", () => run(b.dataset.name, b.dataset.type)));
 
 const params = new URLSearchParams(location.search);
-if (params.get("name")) run(params.get("name"), params.get("type") || "A");
+if (params.get("name")) {
+  run(params.get("name"), params.get("type") || "A").then(() => {
+    if (params.get("compare")) document.querySelector(".ghost")?.click(); // lets a shared link open the comparison too
+  });
+}
 </script>
 </body>
 </html>
